@@ -1,0 +1,112 @@
+<html>
+<body>
+    <div class="login">
+       <h1>Multimodal Analytical Spectra - Molecular Weight Predictor</h1>
+       <p>Predicts molecular weight (g/mol) from real, fused IR + NMR spectral
+          features taken from the IR-NMR Multimodal Computational Spectra
+          Dataset (Zipoli, Alberts, Laino - IBM Research, Zenodo 16417648).</p>
+
+       <form action="{{ url_for('predict_datapoint')}}" method="post">
+        <h1>
+            <legend>Fuse IR + NMR + Descriptor modalities to predict molecular weight</legend>
+        </h1>
+
+        <h3>Descriptor Modality (composition flags from SMILES)</h3>
+        <div class="mb-3">
+            <label class="form-label">Contains Nitrogen</label>
+            <select class="form-control" name="contains_nitrogen" required>
+                <option class="placeholder" selected disabled value="">Select</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Contains Oxygen</label>
+            <select class="form-control" name="contains_oxygen" required>
+                <option class="placeholder" selected disabled value="">Select</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Contains Halogen</label>
+            <select class="form-control" name="contains_halogen" required>
+                <option class="placeholder" selected disabled value="">Select</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Contains Sulfur</label>
+            <select class="form-control" name="contains_sulfur" required>
+                <option class="placeholder" selected disabled value="">Select</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+            </select>
+        </div>
+
+        <h3>IR Modality - band-integrated intensity</h3>
+        <div class="mb-3">
+            <label class="form-label">O-H / N-H stretch (3200-3550 cm&#8315;&sup1;)</label>
+            <input class="form-control" type="number" step="any" name="ir_band_ohnh_stretch_3200_3550" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">C-H stretch (2850-3000 cm&#8315;&sup1;)</label>
+            <input class="form-control" type="number" step="any" name="ir_band_ch_stretch_2850_3000" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Carbonyl C=O (1650-1750 cm&#8315;&sup1;)</label>
+            <input class="form-control" type="number" step="any" name="ir_band_carbonyl_1650_1750" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Aromatic C=C (1450-1600 cm&#8315;&sup1;)</label>
+            <input class="form-control" type="number" step="any" name="ir_band_aromatic_1450_1600" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Fingerprint region (500-1500 cm&#8315;&sup1;)</label>
+            <input class="form-control" type="number" step="any" name="ir_band_fingerprint_500_1500" required/>
+        </div>
+
+        <h3>NMR Modality - 1H and 13C shift summary statistics</h3>
+        <div class="mb-3">
+            <label class="form-label">1H shift mean (ppm)</label>
+            <input class="form-control" type="number" step="any" name="h_nmr_shift_mean" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">1H shift std (ppm)</label>
+            <input class="form-control" type="number" step="any" name="h_nmr_shift_std" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">1H shift max (ppm)</label>
+            <input class="form-control" type="number" step="any" name="h_nmr_shift_max" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">1H peak count</label>
+            <input class="form-control" type="number" step="1" name="h_nmr_peak_count" min="0" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">13C shift mean (ppm)</label>
+            <input class="form-control" type="number" step="any" name="c_nmr_shift_mean" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">13C shift std (ppm)</label>
+            <input class="form-control" type="number" step="any" name="c_nmr_shift_std" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">13C shift max (ppm)</label>
+            <input class="form-control" type="number" step="any" name="c_nmr_shift_max" required/>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">13C peak count</label>
+            <input class="form-control" type="number" step="1" name="c_nmr_peak_count" min="0" required/>
+        </div>
+
+        <div class="mb-3">
+            <input class="btn btn-primary" type="submit" value="Predict Molecular Weight" required />
+        </div>
+    </form>
+    <h2>
+       THE predicted molecular weight is {{results}} g/mol
+    </h2>
+   <body>
+</html>
