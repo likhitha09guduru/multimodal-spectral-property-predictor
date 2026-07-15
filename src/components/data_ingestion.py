@@ -8,17 +8,15 @@ from sklearn.model_selection import train_test_split
 from dataclasses import dataclass
 
 from src.components.data_transformation import DataTransformation
-from src.components.data_transformation import DataTransformationConfig
-
-from src.components.model_trainer import ModelTrainerConfig
 from src.components.model_trainer import ModelTrainer
+from src.config import ARTIFACTS_DIR
 
 
 @dataclass
 class DataIngestionConfig:
-    train_data_path: str = os.path.join('artifacts', "train.csv")
-    test_data_path: str = os.path.join('artifacts', "test.csv")
-    raw_data_path: str = os.path.join('artifacts', "data.csv")
+    train_data_path: str = os.path.join(ARTIFACTS_DIR, "train.csv")
+    test_data_path: str = os.path.join(ARTIFACTS_DIR, "test.csv")
+    raw_data_path: str = os.path.join(ARTIFACTS_DIR, "data.csv")
 
 
 class DataIngestion:
@@ -35,12 +33,15 @@ class DataIngestion:
             # IBM Research; Zenodo record 16417648; CDLA-Permissive-2.0).
             # Run that script first (requires internet + pyarrow + rdkit)
             # to produce notebook/data/multimodal_spectra_dataset.csv.
+            # Each row holds: smiles (-> GNN molecular graph), a binned raw
+            # IR spectrum (-> 1D-CNN input), and the molecular_weight target.
             data_path = 'notebook/data/multimodal_spectra_dataset.csv'
             if not os.path.exists(data_path):
                 raise FileNotFoundError(
                     f"{data_path} not found. Run "
-                    "`python notebook/build_multimodal_dataset.py` first to "
-                    "download and fuse the real IR + NMR dataset."
+                    "`python notebook/build_multimodal_dataset.py` (or add "
+                    "`--demo` for a quick synthetic run) first to build the "
+                    "fused SMILES + IR spectrum dataset."
                 )
             df = pd.read_csv(data_path)
             logging.info('Read the real, fused IR + NMR multimodal dataset as dataframe')
@@ -71,7 +72,7 @@ if __name__ == "__main__":
     train_data, test_data = obj.initiate_data_ingestion()
 
     data_transformation = DataTransformation()
-    train_arr, test_arr, _ = data_transformation.initiate_data_transformation(train_data, test_data)
+    train_dataset, test_dataset, _ = data_transformation.initiate_data_transformation(train_data, test_data)
 
     modeltrainer = ModelTrainer()
-    print(modeltrainer.initiate_model_trainer(train_arr, test_arr))
+    print(modeltrainer.initiate_model_trainer(train_dataset, test_dataset))

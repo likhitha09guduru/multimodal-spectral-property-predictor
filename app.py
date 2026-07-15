@@ -1,15 +1,24 @@
-from flask import Flask, request, render_template
-import numpy as np
-import pandas as pd
+import os
 
-from sklearn.preprocessing import StandardScaler
-from src.pipeline.predict_pipeline import CustomData, PredictPipeline
+from flask import Flask, request, render_template, jsonify
+
+from src.exception import CustomException
+from src.logger import logging
+from src.pipeline.predict_pipeline import CustomData, PredictPipeline, PredictionInputError
 
 application = Flask(__name__)
-
 app = application
 
-## Route for a home page
+# Loaded lazily on first request and cached for the lifetime of this process
+# (one instance per gunicorn worker), rather than rebuilt on every request.
+_pipeline = None
+
+
+def get_pipeline() -> PredictPipeline:
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = PredictPipeline()
+    return _pipeline
 
 
 @app.route('/')
@@ -17,40 +26,56 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/health')
+def health():
+    """Liveness/readiness probe. Reports whether trained artifacts are
+    loadable without failing the whole process if they aren't (yet)."""
+    try:
+        get_pipeline()._ensure_loaded()
+        return jsonify(status="ok", model_loaded=True), 200
+    except Exception as e:
+        return jsonify(status="degraded", model_loaded=False, detail=str(e)), 503
+
+
 @app.route('/predictdata', methods=['GET', 'POST'])
 def predict_datapoint():
     if request.method == 'GET':
-        return render_template('home.html')
-    else:
-        data = CustomData(
-            contains_nitrogen=request.form.get('contains_nitrogen'),
-            contains_oxygen=request.form.get('contains_oxygen'),
-            contains_halogen=request.form.get('contains_halogen'),
-            contains_sulfur=request.form.get('contains_sulfur'),
-            ir_band_ohnh_stretch_3200_3550=float(request.form.get('ir_band_ohnh_stretch_3200_3550')),
-            ir_band_ch_stretch_2850_3000=float(request.form.get('ir_band_ch_stretch_2850_3000')),
-            ir_band_carbonyl_1650_1750=float(request.form.get('ir_band_carbonyl_1650_1750')),
-            ir_band_aromatic_1450_1600=float(request.form.get('ir_band_aromatic_1450_1600')),
-            ir_band_fingerprint_500_1500=float(request.form.get('ir_band_fingerprint_500_1500')),
-            h_nmr_shift_mean=float(request.form.get('h_nmr_shift_mean')),
-            h_nmr_shift_std=float(request.form.get('h_nmr_shift_std')),
-            h_nmr_shift_max=float(request.form.get('h_nmr_shift_max')),
-            h_nmr_peak_count=int(request.form.get('h_nmr_peak_count')),
-            c_nmr_shift_mean=float(request.form.get('c_nmr_shift_mean')),
-            c_nmr_shift_std=float(request.form.get('c_nmr_shift_std')),
-            c_nmr_shift_max=float(request.form.get('c_nmr_shift_max')),
-            c_nmr_peak_count=int(request.form.get('c_nmr_peak_count')),
-        )
-        pred_df = data.get_data_as_data_frame()
-        print(pred_df)
-        print("Before Prediction")
+        return render_template('home.html', results=None, error=None)
 
-        predict_pipeline = PredictPipeline()
-        print("Mid Prediction")
-        results = predict_pipeline.predict(pred_df)
-        print("after Prediction")
-        return render_template('home.html', results=results[0])
+    smiles = (request.form.get('smiles') or "").strip()
+    ir_spectrum_raw = request.form.get('ir_spectrum') or ""
+
+    try:
+        try:
+            ir_spectrum = [float(v) for v in ir_spectrum_raw.split(',') if v.strip() != ""]
+        except ValueError:
+            raise PredictionInputError("IR spectrum must be comma-separated numbers.")
+
+        if not smiles:
+            raise PredictionInputError("SMILES string is required.")
+
+        data = CustomData(smiles=smiles, ir_spectrum=ir_spectrum)
+        results = get_pipeline().predict(data)
+
+        return render_template('home.html', results=float(results[0]), error=None)
+
+    except PredictionInputError as e:
+        return render_template('home.html', results=None, error=str(e)), 400
+    except FileNotFoundError as e:
+        logging.error(f"Model artifacts missing: {e}")
+        return render_template('home.html', results=None, error=str(e)), 503
+    except CustomException as e:
+        logging.error(f"Prediction failed: {e}")
+        return render_template(
+            'home.html', results=None,
+            error="Something went wrong while predicting. Please check your input and try again."
+        ), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0")
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "5000"))
+    # This dev server is fine for local testing; for production run behind a
+    # real WSGI server, e.g.: gunicorn -w 4 -b 0.0.0.0:5000 wsgi:application
+    app.run(host=host, port=port, debug=debug)

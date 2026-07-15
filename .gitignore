@@ -1,3 +1,8 @@
+# Trained model artifacts and logs (regenerate via train_pipeline.py)
+artifacts/
+logs/
+notebook/data/*.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

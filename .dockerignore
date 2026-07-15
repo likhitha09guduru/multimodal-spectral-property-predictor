@@ -1,0 +1,9 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+logs/
+notebook/data/*.csv
+tests/
+.pytest_cache/
+*.egg-info/

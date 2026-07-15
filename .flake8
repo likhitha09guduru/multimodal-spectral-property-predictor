@@ -1,0 +1,6 @@
+[flake8]
+max-line-length = 110
+# E203/W503: black formats around these differently than flake8 expects;
+# both are conventionally disabled when using black together with flake8.
+extend-ignore = E203, W503
+exclude = .git,__pycache__,notebook/data,artifacts,logs

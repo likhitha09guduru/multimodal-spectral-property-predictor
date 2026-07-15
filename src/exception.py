@@ -1,5 +1,5 @@
 import sys
-from src.logger import logging
+from src.logger import logging  # noqa: F401 -- import configures logging handlers on load
 
 def error_message_detail(error, error_detail: sys):
     _, _, exc_tb = error_detail.exc_info()
