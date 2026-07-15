@@ -1,0 +1,9 @@
+{
+  "node_feature_dim": 23,
+  "gnn_hidden_dim": 64,
+  "cnn_hidden_dim": 64,
+  "fusion_hidden_dim": 64,
+  "r2": 0.5776858329772949,
+  "mae": 39.65591049194336,
+  "rmse": 51.77399334336449
+}
