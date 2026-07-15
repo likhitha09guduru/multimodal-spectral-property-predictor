@@ -2,6 +2,7 @@
 artifacts/
 logs/
 notebook/data/*.csv
+notebook/data/raw/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -221,3 +222,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+

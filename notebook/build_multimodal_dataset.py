@@ -35,10 +35,10 @@ Usage:
     python notebook/build_multimodal_dataset.py --demo --n 500
 """
 import argparse
-import io
 import json
 import os
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -55,13 +55,55 @@ N_IR_CHUNKS = 9
 
 OUT_PATH = os.path.join("notebook", "data", "multimodal_spectra_dataset.csv")
 
+# Raw downloads are cached here so a failure partway through the 9 IR chunks
+# doesn't force re-downloading everything already fetched successfully.
+RAW_CACHE_DIR = os.path.join("notebook", "data", "raw")
+
+MAX_RETRIES = 4
+RETRY_BACKOFF_SECONDS = 10  # doubles each retry: 10s, 20s, 40s, 80s
+
 
 def _download_parquet(filename: str) -> pd.DataFrame:
+    """Download a parquet file from the Zenodo record, or load it from a
+    local cache if it was already downloaded in a previous run. Retries
+    transient server errors (e.g. 504 Gateway Timeout) with backoff before
+    giving up."""
+    os.makedirs(RAW_CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(RAW_CACHE_DIR, filename)
+
+    if os.path.exists(cache_path):
+        logging.info(f"Using cached {cache_path} (delete it to force re-download)")
+        return pd.read_parquet(cache_path)
+
     url = f"{ZENODO_RECORD}/{filename}?download=1"
-    logging.info(f"Downloading {url}")
-    resp = requests.get(url, timeout=300)
-    resp.raise_for_status()
-    return pd.read_parquet(io.BytesIO(resp.content))
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logging.info(f"Downloading {url} (attempt {attempt}/{MAX_RETRIES})")
+            resp = requests.get(url, timeout=300)
+            resp.raise_for_status()
+            # Write to a temp path first so a crash mid-write never leaves a
+            # corrupt file sitting at cache_path for a future run to trust.
+            tmp_path = cache_path + ".part"
+            with open(tmp_path, "wb") as f:
+                f.write(resp.content)
+            os.replace(tmp_path, cache_path)
+            return pd.read_parquet(cache_path)
+        except (requests.exceptions.RequestException, requests.exceptions.HTTPError) as e:
+            last_err = e
+            is_last_attempt = attempt == MAX_RETRIES
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            logging.warning(
+                f"Download of {filename} failed (attempt {attempt}/{MAX_RETRIES}, "
+                f"status={status}): {e}"
+            )
+            if is_last_attempt:
+                break
+            sleep_for = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            logging.info(f"Retrying {filename} in {sleep_for}s...")
+            time.sleep(sleep_for)
+
+    raise last_err
 
 
 def _bin_spectrum(freq: np.ndarray, intensity: np.ndarray, n_bins: int = IR_BINS) -> np.ndarray:
