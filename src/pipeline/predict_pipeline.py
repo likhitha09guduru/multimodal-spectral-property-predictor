@@ -1,105 +1,126 @@
 import os
 import sys
-import pandas as pd
+
+import numpy as np
+import torch
+from torch_geometric.data import Batch
+
+from src.components.model_training import CNNGNNRegressor
+from src.config import ARTIFACTS_DIR
 from src.exception import CustomException
-from src.utils import load_object
+from src.utils import is_valid_smiles, load_json, load_model, load_object, smiles_to_graph
 
 
-class PredictPipeline:
-    def __init__(self):
-        pass
+class PredictionInputError(Exception):
+    """
+    Raised for bad *user* input (invalid SMILES, wrong-length or non-numeric
+    IR spectrum) as opposed to CustomException, which wraps unexpected
+    internal errors. Kept separate so app.py can map this to HTTP 400
+    instead of HTTP 500.
+    """
 
-    def predict(self, features):
-        try:
-            model_path = os.path.join("artifacts", "model.pkl")
-            preprocessor_path = os.path.join("artifacts", "preprocessor.pkl")
-            print("Before Loading")
-            model = load_object(file_path=model_path)
-            preprocessor = load_object(file_path=preprocessor_path)
-            print("After Loading")
-            data_scaled = preprocessor.transform(features)
-            preds = model.predict(data_scaled)
-            return preds
-
-        except Exception as e:
-            raise CustomException(e, sys)
+    pass
 
 
 class CustomData:
     """
-    Wraps a single real multimodal sample: IR modality band-intensity
-    features, NMR modality shift-summary features, and the categorical
-    composition-descriptor modality (all engineered by
-    notebook/build_multimodal_dataset.py from the real Zenodo IR-NMR
-    dataset), and turns them into the single-row dataframe the fusion
-    preprocessor expects.
+    Wraps a single raw prediction request -- a SMILES string (GNN modality
+    input) and a raw IR spectrum (CNN modality input) -- before any
+    validation or scaling has been applied.
     """
 
-    def __init__(
-        self,
-        contains_nitrogen: str,
-        contains_oxygen: str,
-        contains_halogen: str,
-        contains_sulfur: str,
-        ir_band_ohnh_stretch_3200_3550: float,
-        ir_band_ch_stretch_2850_3000: float,
-        ir_band_carbonyl_1650_1750: float,
-        ir_band_aromatic_1450_1600: float,
-        ir_band_fingerprint_500_1500: float,
-        h_nmr_shift_mean: float,
-        h_nmr_shift_std: float,
-        h_nmr_shift_max: float,
-        h_nmr_peak_count: int,
-        c_nmr_shift_mean: float,
-        c_nmr_shift_std: float,
-        c_nmr_shift_max: float,
-        c_nmr_peak_count: int,
-    ):
+    def __init__(self, smiles: str, ir_spectrum):
+        self.smiles = smiles
+        self.ir_spectrum = list(ir_spectrum)
 
-        self.contains_nitrogen = contains_nitrogen
-        self.contains_oxygen = contains_oxygen
-        self.contains_halogen = contains_halogen
-        self.contains_sulfur = contains_sulfur
 
-        self.ir_band_ohnh_stretch_3200_3550 = ir_band_ohnh_stretch_3200_3550
-        self.ir_band_ch_stretch_2850_3000 = ir_band_ch_stretch_2850_3000
-        self.ir_band_carbonyl_1650_1750 = ir_band_carbonyl_1650_1750
-        self.ir_band_aromatic_1450_1600 = ir_band_aromatic_1450_1600
-        self.ir_band_fingerprint_500_1500 = ir_band_fingerprint_500_1500
+class PredictPipeline:
+    """
+    Loads the trained CNN+GNN fusion model, its architecture config, and the
+    fitted IR-spectrum scaler, then exposes .predict(CustomData) -> a length-1
+    np.ndarray with the predicted molecular weight.
 
-        self.h_nmr_shift_mean = h_nmr_shift_mean
-        self.h_nmr_shift_std = h_nmr_shift_std
-        self.h_nmr_shift_max = h_nmr_shift_max
-        self.h_nmr_peak_count = h_nmr_peak_count
+    Artifacts are loaded lazily (on first .predict()/._ensure_loaded() call)
+    and cached on the instance, so construction itself never touches disk --
+    that's what lets app.py's /health check call _ensure_loaded() explicitly
+    to report whether the model is ready without side effects at import time.
+    """
 
-        self.c_nmr_shift_mean = c_nmr_shift_mean
-        self.c_nmr_shift_std = c_nmr_shift_std
-        self.c_nmr_shift_max = c_nmr_shift_max
-        self.c_nmr_peak_count = c_nmr_peak_count
+    def __init__(self, model_dir: str = None):
+        self.model_dir = model_dir or ARTIFACTS_DIR
+        self.model_path = os.path.join(self.model_dir, "model.pt")
+        self.model_config_path = os.path.join(self.model_dir, "model_config.json")
+        self.preprocessor_path = os.path.join(self.model_dir, "preprocessor.pkl")
 
-    def get_data_as_data_frame(self):
+        self._model = None
+        self._preprocessor = None
+
+    def _ensure_loaded(self):
+        """
+        Loads the model + preprocessor from disk if not already cached.
+        Raises FileNotFoundError (not CustomException) when artifacts are
+        missing, so callers -- and tests -- can distinguish "not trained
+        yet" from a genuine internal error.
+        """
+        if self._model is not None and self._preprocessor is not None:
+            return
+
+        for path in (self.model_path, self.model_config_path, self.preprocessor_path):
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Model artifact not found: {path}. Train the model first with "
+                    "`python src/pipeline/train_pipeline.py`."
+                )
+
         try:
-            custom_data_input_dict = {
-                "contains_nitrogen": [self.contains_nitrogen],
-                "contains_oxygen": [self.contains_oxygen],
-                "contains_halogen": [self.contains_halogen],
-                "contains_sulfur": [self.contains_sulfur],
-                "ir_band_ohnh_stretch_3200_3550": [self.ir_band_ohnh_stretch_3200_3550],
-                "ir_band_ch_stretch_2850_3000": [self.ir_band_ch_stretch_2850_3000],
-                "ir_band_carbonyl_1650_1750": [self.ir_band_carbonyl_1650_1750],
-                "ir_band_aromatic_1450_1600": [self.ir_band_aromatic_1450_1600],
-                "ir_band_fingerprint_500_1500": [self.ir_band_fingerprint_500_1500],
-                "h_nmr_shift_mean": [self.h_nmr_shift_mean],
-                "h_nmr_shift_std": [self.h_nmr_shift_std],
-                "h_nmr_shift_max": [self.h_nmr_shift_max],
-                "h_nmr_peak_count": [self.h_nmr_peak_count],
-                "c_nmr_shift_mean": [self.c_nmr_shift_mean],
-                "c_nmr_shift_std": [self.c_nmr_shift_std],
-                "c_nmr_shift_max": [self.c_nmr_shift_max],
-                "c_nmr_peak_count": [self.c_nmr_peak_count],
-            }
+            config = load_json(self.model_config_path)
+            model = CNNGNNRegressor(
+                node_feature_dim=config["node_feature_dim"],
+                gnn_hidden_dim=config["gnn_hidden_dim"],
+                cnn_hidden_dim=config["cnn_hidden_dim"],
+                fusion_hidden_dim=config["fusion_hidden_dim"],
+            )
+            model = load_model(self.model_path, model)
+            preprocessor = load_object(self.preprocessor_path)
+        except Exception as e:
+            raise CustomException(e, sys)
 
-            return pd.DataFrame(custom_data_input_dict)
+        self._model = model
+        self._preprocessor = preprocessor
 
+    def predict(self, data: CustomData) -> np.ndarray:
+        # 1. Validate user input BEFORE touching disk, so bad input fails
+        #    fast without requiring a trained model to be present.
+        if not is_valid_smiles(data.smiles):
+            raise PredictionInputError(f"Invalid SMILES string: {data.smiles!r}")
+
+        if not data.ir_spectrum or any(not isinstance(v, (int, float)) for v in data.ir_spectrum):
+            raise PredictionInputError("IR spectrum must be a non-empty list of numbers.")
+
+        # 2. Load model + preprocessor (may raise FileNotFoundError).
+        self._ensure_loaded()
+
+        # 3. Validate the spectrum length against what the preprocessor was
+        #    actually fit on, now that we know that length.
+        expected_len = getattr(self._preprocessor, "n_features_in_", None)
+        if expected_len is not None and len(data.ir_spectrum) != expected_len:
+            raise PredictionInputError(
+                f"IR spectrum has {len(data.ir_spectrum)} values; expected {expected_len}."
+            )
+
+        try:
+            spectrum_scaled = self._preprocessor.transform(
+                np.array(data.ir_spectrum, dtype=np.float32).reshape(1, -1)
+            )
+            spectrum_tensor = torch.tensor(spectrum_scaled, dtype=torch.float32)
+
+            graph = smiles_to_graph(data.smiles)
+            graph_batch = Batch.from_data_list([graph])
+
+            self._model.eval()
+            with torch.no_grad():
+                preds = self._model(graph_batch, spectrum_tensor)
+
+            return preds.numpy()
         except Exception as e:
             raise CustomException(e, sys)
