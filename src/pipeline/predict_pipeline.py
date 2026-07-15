@@ -12,7 +12,7 @@ class PredictPipeline:
     def predict(self, features):
         try:
             model_path = os.path.join("artifacts", "model.pkl")
-            preprocessor_path = os.path.join('artifacts', 'preprocessor.pkl')
+            preprocessor_path = os.path.join("artifacts", "preprocessor.pkl")
             print("Before Loading")
             model = load_object(file_path=model_path)
             preprocessor = load_object(file_path=preprocessor_path)
@@ -35,24 +35,26 @@ class CustomData:
     preprocessor expects.
     """
 
-    def __init__(self,
-                 contains_nitrogen: str,
-                 contains_oxygen: str,
-                 contains_halogen: str,
-                 contains_sulfur: str,
-                 ir_band_ohnh_stretch_3200_3550: float,
-                 ir_band_ch_stretch_2850_3000: float,
-                 ir_band_carbonyl_1650_1750: float,
-                 ir_band_aromatic_1450_1600: float,
-                 ir_band_fingerprint_500_1500: float,
-                 h_nmr_shift_mean: float,
-                 h_nmr_shift_std: float,
-                 h_nmr_shift_max: float,
-                 h_nmr_peak_count: int,
-                 c_nmr_shift_mean: float,
-                 c_nmr_shift_std: float,
-                 c_nmr_shift_max: float,
-                 c_nmr_peak_count: int):
+    def __init__(
+        self,
+        contains_nitrogen: str,
+        contains_oxygen: str,
+        contains_halogen: str,
+        contains_sulfur: str,
+        ir_band_ohnh_stretch_3200_3550: float,
+        ir_band_ch_stretch_2850_3000: float,
+        ir_band_carbonyl_1650_1750: float,
+        ir_band_aromatic_1450_1600: float,
+        ir_band_fingerprint_500_1500: float,
+        h_nmr_shift_mean: float,
+        h_nmr_shift_std: float,
+        h_nmr_shift_max: float,
+        h_nmr_peak_count: int,
+        c_nmr_shift_mean: float,
+        c_nmr_shift_std: float,
+        c_nmr_shift_max: float,
+        c_nmr_peak_count: int,
+    ):
 
         self.contains_nitrogen = contains_nitrogen
         self.contains_oxygen = contains_oxygen

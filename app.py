@@ -21,12 +21,12 @@ def get_pipeline() -> PredictPipeline:
     return _pipeline
 
 
-@app.route('/')
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
 
-@app.route('/health')
+@app.route("/health")
 def health():
     """Liveness/readiness probe. Reports whether trained artifacts are
     loadable without failing the whole process if they aren't (yet)."""
@@ -37,17 +37,17 @@ def health():
         return jsonify(status="degraded", model_loaded=False, detail=str(e)), 503
 
 
-@app.route('/predictdata', methods=['GET', 'POST'])
+@app.route("/predictdata", methods=["GET", "POST"])
 def predict_datapoint():
-    if request.method == 'GET':
-        return render_template('home.html', results=None, error=None)
+    if request.method == "GET":
+        return render_template("home.html", results=None, error=None)
 
-    smiles = (request.form.get('smiles') or "").strip()
-    ir_spectrum_raw = request.form.get('ir_spectrum') or ""
+    smiles = (request.form.get("smiles") or "").strip()
+    ir_spectrum_raw = request.form.get("ir_spectrum") or ""
 
     try:
         try:
-            ir_spectrum = [float(v) for v in ir_spectrum_raw.split(',') if v.strip() != ""]
+            ir_spectrum = [float(v) for v in ir_spectrum_raw.split(",") if v.strip() != ""]
         except ValueError:
             raise PredictionInputError("IR spectrum must be comma-separated numbers.")
 
@@ -57,19 +57,23 @@ def predict_datapoint():
         data = CustomData(smiles=smiles, ir_spectrum=ir_spectrum)
         results = get_pipeline().predict(data)
 
-        return render_template('home.html', results=float(results[0]), error=None)
+        return render_template("home.html", results=float(results[0]), error=None)
 
     except PredictionInputError as e:
-        return render_template('home.html', results=None, error=str(e)), 400
+        return render_template("home.html", results=None, error=str(e)), 400
     except FileNotFoundError as e:
         logging.error(f"Model artifacts missing: {e}")
-        return render_template('home.html', results=None, error=str(e)), 503
+        return render_template("home.html", results=None, error=str(e)), 503
     except CustomException as e:
         logging.error(f"Prediction failed: {e}")
-        return render_template(
-            'home.html', results=None,
-            error="Something went wrong while predicting. Please check your input and try again."
-        ), 500
+        return (
+            render_template(
+                "home.html",
+                results=None,
+                error="Something went wrong while predicting. Please check your input and try again.",
+            ),
+            500,
+        )
 
 
 if __name__ == "__main__":

@@ -51,13 +51,13 @@ class DataTransformation:
         self.data_transformation_config = DataTransformationConfig()
 
     def get_data_transformer_object(self):
-        '''
+        """
         This function is responsible for the numeric (IR spectrum) modality
         transformation: a StandardScaler fitted bin-wise across the dataset.
         The graph modality needs no fitted transformer -- smiles_to_graph is
         a deterministic RDKit featurization applied identically at train and
         inference time.
-        '''
+        """
         try:
             scaler = StandardScaler()
             logging.info("Built StandardScaler for the IR spectrum (CNN) modality")
@@ -113,8 +113,7 @@ class DataTransformation:
             logging.info("Saved preprocessing object.")
 
             save_object(
-                file_path=self.data_transformation_config.preprocessor_obj_file_path,
-                obj=preprocessing_obj
+                file_path=self.data_transformation_config.preprocessor_obj_file_path, obj=preprocessing_obj
             )
 
             return (
@@ -124,4 +123,3 @@ class DataTransformation:
             )
         except Exception as e:
             raise CustomException(e, sys)
-

@@ -9,6 +9,7 @@ worker count should be sized against available RAM, not just CPU cores.
 --timeout 120: generous headroom for cold model load on the first request
 into a fresh worker.
 """
+
 from app import application
 
 if __name__ == "__main__":

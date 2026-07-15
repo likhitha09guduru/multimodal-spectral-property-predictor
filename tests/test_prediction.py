@@ -35,12 +35,18 @@ def test_wrong_length_spectrum_raises_after_model_loads(tmp_path):
     expected_len = 32
     model = CNNGNNRegressor(
         node_feature_dim=num_atom_features(),
-        gnn_hidden_dim=4, cnn_hidden_dim=4, fusion_hidden_dim=4,
+        gnn_hidden_dim=4,
+        cnn_hidden_dim=4,
+        fusion_hidden_dim=4,
     )
     save_model(str(tmp_path / "model.pt"), model)
     save_json(
-        {"node_feature_dim": num_atom_features(), "gnn_hidden_dim": 4,
-         "cnn_hidden_dim": 4, "fusion_hidden_dim": 4},
+        {
+            "node_feature_dim": num_atom_features(),
+            "gnn_hidden_dim": 4,
+            "cnn_hidden_dim": 4,
+            "fusion_hidden_dim": 4,
+        },
         str(tmp_path / "model_config.json"),
     )
     scaler = StandardScaler().fit(np.random.rand(10, expected_len))
@@ -63,12 +69,18 @@ def test_correct_input_returns_a_prediction(tmp_path):
     expected_len = 32
     model = CNNGNNRegressor(
         node_feature_dim=num_atom_features(),
-        gnn_hidden_dim=4, cnn_hidden_dim=4, fusion_hidden_dim=4,
+        gnn_hidden_dim=4,
+        cnn_hidden_dim=4,
+        fusion_hidden_dim=4,
     )
     save_model(str(tmp_path / "model.pt"), model)
     save_json(
-        {"node_feature_dim": num_atom_features(), "gnn_hidden_dim": 4,
-         "cnn_hidden_dim": 4, "fusion_hidden_dim": 4},
+        {
+            "node_feature_dim": num_atom_features(),
+            "gnn_hidden_dim": 4,
+            "cnn_hidden_dim": 4,
+            "fusion_hidden_dim": 4,
+        },
         str(tmp_path / "model_config.json"),
     )
     scaler = StandardScaler().fit(np.random.rand(10, expected_len))

@@ -112,6 +112,7 @@ def is_valid_smiles(smiles: str) -> bool:
     if not smiles or not isinstance(smiles, str):
         return False
     from rdkit import Chem
+
     return Chem.MolFromSmiles(smiles) is not None
 
 
@@ -173,6 +174,7 @@ def regression_metrics(y_true, y_pred) -> dict:
     """R², MAE, and RMSE together, for logging/model_config/README reporting."""
     try:
         from sklearn.metrics import mean_absolute_error, mean_squared_error
+
         return {
             "r2": float(r2_score(y_true, y_pred)),
             "mae": float(mean_absolute_error(y_true, y_pred)),

@@ -35,7 +35,7 @@ class DataIngestion:
             # to produce notebook/data/multimodal_spectra_dataset.csv.
             # Each row holds: smiles (-> GNN molecular graph), a binned raw
             # IR spectrum (-> 1D-CNN input), and the molecular_weight target.
-            data_path = 'notebook/data/multimodal_spectra_dataset.csv'
+            data_path = "notebook/data/multimodal_spectra_dataset.csv"
             if not os.path.exists(data_path):
                 raise FileNotFoundError(
                     f"{data_path} not found. Run "
@@ -44,7 +44,7 @@ class DataIngestion:
                     "fused SMILES + IR spectrum dataset."
                 )
             df = pd.read_csv(data_path)
-            logging.info('Read the real, fused IR + NMR multimodal dataset as dataframe')
+            logging.info("Read the real, fused IR + NMR multimodal dataset as dataframe")
 
             os.makedirs(os.path.dirname(self.ingestion_config.train_data_path), exist_ok=True)
 
@@ -59,10 +59,7 @@ class DataIngestion:
 
             logging.info("Ingestion of the data is completed")
 
-            return (
-                self.ingestion_config.train_data_path,
-                self.ingestion_config.test_data_path
-            )
+            return (self.ingestion_config.train_data_path, self.ingestion_config.test_data_path)
         except Exception as e:
             raise CustomException(e, sys)
 

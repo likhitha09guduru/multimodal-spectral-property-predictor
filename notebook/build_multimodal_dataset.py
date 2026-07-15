@@ -34,6 +34,7 @@ Usage:
     python notebook/build_multimodal_dataset.py --demo      # fast synthetic
     python notebook/build_multimodal_dataset.py --demo --n 500
 """
+
 import argparse
 import json
 import os
@@ -94,8 +95,7 @@ def _download_parquet(filename: str) -> pd.DataFrame:
             is_last_attempt = attempt == MAX_RETRIES
             status = getattr(getattr(e, "response", None), "status_code", None)
             logging.warning(
-                f"Download of {filename} failed (attempt {attempt}/{MAX_RETRIES}, "
-                f"status={status}): {e}"
+                f"Download of {filename} failed (attempt {attempt}/{MAX_RETRIES}, " f"status={status}): {e}"
             )
             if is_last_attempt:
                 break
@@ -120,6 +120,7 @@ def _bin_spectrum(freq: np.ndarray, intensity: np.ndarray, n_bins: int = IR_BINS
 def _molecular_weight(smiles: str):
     from rdkit import Chem
     from rdkit.Chem import Descriptors
+
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
@@ -144,12 +145,14 @@ def build_real_dataset() -> pd.DataFrame:
                 if mw is None:
                     continue
                 binned = _bin_spectrum(row["Frequency(cm^-1)"], row["ir_spectra"])
-                rows.append({
-                    "id": row["id"],
-                    "smiles": row["smiles"],
-                    "ir_spectrum_binned": json.dumps(binned.tolist()),
-                    "molecular_weight": mw,
-                })
+                rows.append(
+                    {
+                        "id": row["id"],
+                        "smiles": row["smiles"],
+                        "ir_spectrum_binned": json.dumps(binned.tolist()),
+                        "molecular_weight": mw,
+                    }
+                )
 
         df = pd.DataFrame(rows).drop_duplicates(subset="id").reset_index(drop=True)
         logging.info(f"Fused real IR+NMR dataset built with {len(df)} molecules")
@@ -170,10 +173,26 @@ def build_demo_dataset(n: int = 500, seed: int = 42) -> pd.DataFrame:
 
     rng = np.random.default_rng(seed)
     base_smiles = [
-        "CCO", "CC(=O)O", "c1ccccc1", "CCN", "CC(C)O", "CCOCC", "CC(=O)OC",
-        "c1ccc(O)cc1", "CCCCO", "CC(N)C(=O)O", "c1ccncc1", "CC(C)=O",
-        "CCOC(=O)C", "CCCl", "c1ccc(N)cc1", "CCCCCC", "OCC(O)CO",
-        "CC(C)(C)O", "c1ccc(Cl)cc1", "CCCCN",
+        "CCO",
+        "CC(=O)O",
+        "c1ccccc1",
+        "CCN",
+        "CC(C)O",
+        "CCOCC",
+        "CC(=O)OC",
+        "c1ccc(O)cc1",
+        "CCCCO",
+        "CC(N)C(=O)O",
+        "c1ccncc1",
+        "CC(C)=O",
+        "CCOC(=O)C",
+        "CCCl",
+        "c1ccc(N)cc1",
+        "CCCCCC",
+        "OCC(O)CO",
+        "CC(C)(C)O",
+        "c1ccc(Cl)cc1",
+        "CCCCN",
     ]
     smiles_pool = [s for s in base_smiles if Chem.MolFromSmiles(s) is not None]
 
@@ -194,12 +213,14 @@ def build_demo_dataset(n: int = 500, seed: int = 42) -> pd.DataFrame:
         intensity += rng.normal(0, 0.02, size=freq.shape)
         binned = _bin_spectrum(freq, intensity)
 
-        rows.append({
-            "id": f"demo_{i}",
-            "smiles": smi,
-            "ir_spectrum_binned": json.dumps(binned.tolist()),
-            "molecular_weight": mw,
-        })
+        rows.append(
+            {
+                "id": f"demo_{i}",
+                "smiles": smi,
+                "ir_spectrum_binned": json.dumps(binned.tolist()),
+                "molecular_weight": mw,
+            }
+        )
 
     df = pd.DataFrame(rows)
     logging.info(f"Synthetic demo dataset built with {len(df)} rows (SYNTHETIC SPECTRA)")
@@ -208,8 +229,11 @@ def build_demo_dataset(n: int = 500, seed: int = 42) -> pd.DataFrame:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--demo", action="store_true",
-                         help="Build a small synthetic dataset instead of downloading the real 8GB dataset")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Build a small synthetic dataset instead of downloading the real 8GB dataset",
+    )
     parser.add_argument("--n", type=int, default=500, help="Number of rows for --demo mode")
     args = parser.parse_args()
 

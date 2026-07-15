@@ -65,11 +65,11 @@ class CNNBranch(nn.Module):
         self.fc = nn.Linear(32, hidden_dim)
 
     def forward(self, spectrum):
-        x = spectrum.unsqueeze(1)              # (batch, 1, IR_BINS)
+        x = spectrum.unsqueeze(1)  # (batch, 1, IR_BINS)
         x = F.relu(self.conv1(x))
         x = F.max_pool1d(x, 2)
         x = F.relu(self.conv2(x))
-        x = self.pool(x).squeeze(-1)            # (batch, 32)
+        x = self.pool(x).squeeze(-1)  # (batch, 32)
         x = F.relu(self.fc(x))
         return x
 
@@ -113,12 +113,16 @@ class ModelTrainer:
             logging.info("Building DataLoaders for the fused (graph + spectrum) multimodal samples")
 
             train_loader = torch.utils.data.DataLoader(
-                train_dataset, batch_size=self.model_trainer_config.batch_size,
-                shuffle=True, collate_fn=_collate_multimodal,
+                train_dataset,
+                batch_size=self.model_trainer_config.batch_size,
+                shuffle=True,
+                collate_fn=_collate_multimodal,
             )
             test_loader = torch.utils.data.DataLoader(
-                test_dataset, batch_size=self.model_trainer_config.batch_size,
-                shuffle=False, collate_fn=_collate_multimodal,
+                test_dataset,
+                batch_size=self.model_trainer_config.batch_size,
+                shuffle=False,
+                collate_fn=_collate_multimodal,
             )
 
             model = CNNGNNRegressor(
@@ -147,8 +151,10 @@ class ModelTrainer:
                 loss_history.append(mean_epoch_loss)
 
                 if (epoch + 1) % 10 == 0 or epoch == 0:
-                    logging.info(f"Epoch {epoch + 1}/{self.model_trainer_config.epochs} "
-                                 f"- train MSE: {mean_epoch_loss:.4f}")
+                    logging.info(
+                        f"Epoch {epoch + 1}/{self.model_trainer_config.epochs} "
+                        f"- train MSE: {mean_epoch_loss:.4f}"
+                    )
 
             model.eval()
             all_preds, all_targets = [], []
@@ -208,6 +214,7 @@ class ModelTrainer:
         """
         try:
             import matplotlib
+
             matplotlib.use("Agg")  # headless, no display needed
             import matplotlib.pyplot as plt
 
