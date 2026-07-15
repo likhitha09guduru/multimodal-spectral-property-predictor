@@ -1,40 +1,42 @@
 """
-Downloads the REAL, published IR-NMR multimodal spectroscopy dataset and
-builds a fused tabular feature file for the ML pipeline.
+Builds notebook/data/multimodal_spectra_dataset.csv, the fused dataset that
+src/components/data_ingestion.py reads.
 
-Dataset (real, not synthetic):
-  "IR-NMR Multimodal Computational Spectra Dataset for 177K Patent-Extracted
-  Organic Molecules" - Zipoli, Alberts, Laino (IBM Research Europe - Zurich)
-  Zenodo record: https://zenodo.org/records/16417648
-  License: Community Data License Agreement - Permissive 2.0 (CDLA-Permissive-2.0)
-  Paper: https://chemrxiv.org/engage/chemrxiv/article-details/684f1f86c1cb1ecda0230ceb
+Source: the REAL, published "IR-NMR Multimodal Computational Spectra Dataset
+for 177K Patent-Extracted Organic Molecules" (Zipoli, Alberts, Laino; IBM
+Research; Zenodo record 16417648; CDLA-Permissive-2.0).
+https://doi.org/10.5281/zenodo.16417648
 
-  Spectra were computed with a hybrid MD + DFT + ML pipeline (not hand-made
-  synthetic numbers): NMR shifts come from CPMD molecular-dynamics-averaged
-  shielding calculations, IR spectra come from the Fourier transform of
-  dipole-moment autocorrelation functions sampled along MD trajectories.
+The Zenodo record ships two kinds of files:
+  - NMR_data.parquet                      -> 1,255 molecules (id, smiles, ...)
+  - IR_data_chunk001..009_of_009.parquet   -> 177,461 molecules (id, smiles,
+                                               Frequency(cm^-1), ir_spectra)
 
-Contents downloaded:
-  - NMR_data.parquet            (~23 MB,  1,255 molecules, 1H + 13C NMR shifts)
-  - IR_data_chunkNNN_of_009.parquet (~900 MB each, 20,000 molecules/chunk,
-    177,461 molecules total across 9 chunks)
+Only molecules present in BOTH files (i.e. the 1,255 NMR molecules) are kept,
+since the GNN+CNN model needs a SMILES string (for the graph) and an IR
+spectrum (for the CNN) for every row. This script:
+  1. Downloads NMR_data.parquet and scans the 9 IR chunk files, keeping only
+     rows whose `id` also appears in the NMR data.
+  2. Bins/interpolates each molecule's raw IR spectrum onto a fixed-length
+     grid (IR_BINS points) so every row has a same-shape CNN input.
+  3. Computes molecular_weight for each molecule from its SMILES with RDKit
+     -- this is the regression target.
+  4. Writes id, smiles, ir_spectrum_binned (JSON list), molecular_weight to
+     notebook/data/multimodal_spectra_dataset.csv.
 
-Because the full IR data is ~8.1 GB, by default this script only downloads
-IR chunk 1 (~900 MB) and keeps whichever molecules in that chunk also have
-NMR data (partial overlap - enough for a working demo). Pass --chunks with
-more chunk numbers (1-9) for broader molecule coverage; note this pipeline
-does not need to be re-run once notebook/data/multimodal_spectra_dataset.csv
-exists.
-
-This script needs internet access and the extra packages listed in
-requirements.txt (pyarrow, rdkit, requests) - it is meant to be run on your
-own machine, not inside a network-restricted sandbox.
+This is a large, slow download (~8GB across all 9 IR chunks, since a
+molecule's `id` can land in any chunk). Use --demo for a small synthetic
+stand-in dataset (same schema, RDKit-computed target, made-up spectra) so you
+can exercise the rest of the pipeline without waiting on the full download.
 
 Usage:
-    python notebook/build_multimodal_dataset.py --chunks 1
-    python notebook/build_multimodal_dataset.py --chunks 1 2 3   # broader coverage
+    python notebook/build_multimodal_dataset.py            # real data (slow)
+    python notebook/build_multimodal_dataset.py --demo      # fast synthetic
+    python notebook/build_multimodal_dataset.py --demo --n 500
 """
 import argparse
+import io
+import json
 import os
 import sys
 
@@ -42,201 +44,139 @@ import numpy as np
 import pandas as pd
 import requests
 
-ZENODO_BASE = "https://zenodo.org/records/16417648/files"
-NMR_URL = f"{ZENODO_BASE}/NMR_data.parquet?download=1"
-IR_CHUNK_URL_TEMPLATE = f"{ZENODO_BASE}/IR_data_chunk{{:03d}}_of_009.parquet?download=1"
+from src.exception import CustomException
+from src.logger import logging
+from src.config import IR_BINS  # fixed-length CNN input grid, shared with app/pipeline
 
-RAW_DIR = os.path.join(os.path.dirname(__file__), "data", "raw")
-OUT_PATH = os.path.join(os.path.dirname(__file__), "data", "multimodal_spectra_dataset.csv")
+ZENODO_RECORD = "https://zenodo.org/records/16417648/files"
+NMR_FILE = "NMR_data.parquet"
+IR_CHUNK_TEMPLATE = "IR_data_chunk{:03d}_of_009.parquet"
+N_IR_CHUNKS = 9
 
-# IR functional-group band windows (cm^-1) used to turn a full IR spectrum
-# into fixed-size, chemically interpretable features (standard practice in
-# IR spectral analysis - these are textbook functional-group regions).
-IR_BANDS = {
-    "ir_band_ohnh_stretch_3200_3550": (3200.0, 3550.0),   # O-H / N-H stretch
-    "ir_band_ch_stretch_2850_3000": (2850.0, 3000.0),     # C-H stretch
-    "ir_band_carbonyl_1650_1750": (1650.0, 1750.0),       # C=O stretch
-    "ir_band_aromatic_1450_1600": (1450.0, 1600.0),       # aromatic C=C
-    "ir_band_fingerprint_500_1500": (500.0, 1500.0),      # fingerprint region
-}
+OUT_PATH = os.path.join("notebook", "data", "multimodal_spectra_dataset.csv")
 
 
-def download_file(url: str, dest_path: str) -> None:
-    if os.path.exists(dest_path):
-        print(f"Already downloaded: {dest_path}")
-        return
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    print(f"Downloading {url} -> {dest_path}")
-    with requests.get(url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        written = 0
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-                written += len(chunk)
-                if total:
-                    print(f"\r  {written / 1e6:8.1f} / {total / 1e6:8.1f} MB", end="")
-        print()
+def _download_parquet(filename: str) -> pd.DataFrame:
+    url = f"{ZENODO_RECORD}/{filename}?download=1"
+    logging.info(f"Downloading {url}")
+    resp = requests.get(url, timeout=300)
+    resp.raise_for_status()
+    return pd.read_parquet(io.BytesIO(resp.content))
 
 
-def summarize_shift_array(values) -> dict:
-    """Turns a variable-length list of NMR chemical shifts into fixed-size
-    summary features (mean/std/min/max/count) - a standard way to featurize
-    a spectrum for tabular ML models."""
-    arr = np.asarray(values, dtype=float) if values is not None else np.array([])
-    arr = arr[~np.isnan(arr)] if arr.size else arr
-    if arr.size == 0:
-        return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "count": 0}
-    return {
-        "mean": float(np.mean(arr)),
-        "std": float(np.std(arr)),
-        "min": float(np.min(arr)),
-        "max": float(np.max(arr)),
-        "count": int(arr.size),
-    }
+def _bin_spectrum(freq: np.ndarray, intensity: np.ndarray, n_bins: int = IR_BINS) -> np.ndarray:
+    """Resample a raw IR spectrum onto a fixed-length grid via interpolation."""
+    freq = np.asarray(freq, dtype=float)
+    intensity = np.asarray(intensity, dtype=float)
+    order = np.argsort(freq)
+    freq, intensity = freq[order], intensity[order]
+    grid = np.linspace(freq.min(), freq.max(), n_bins)
+    binned = np.interp(grid, freq, intensity)
+    return binned
 
 
-def extract_nmr_row_features(row) -> dict:
-    """Pulls the averaged 1H and 13C shift arrays out of a NMR_data.parquet
-    row. The real schema nests shift arrays either directly under
-    'averaged_frames' or under the first entry of 'frames'; this handles
-    both, which is necessary because Parquet/JSON nesting depth in the
-    published file isn't guaranteed to be flat."""
-    h_shifts, c_shifts = None, None
-
-    averaged = row.get("averaged_frames")
-    if isinstance(averaged, dict):
-        h_shifts = averaged.get("h_nmr_peaks_ave")
-        c_shifts = averaged.get("c_nmr_peaks_ave")
-
-    if h_shifts is None or c_shifts is None:
-        frames = row.get("frames")
-        if isinstance(frames, dict):
-            h_shifts = h_shifts if h_shifts is not None else frames.get("h_nmr_peaks_ave")
-            c_shifts = c_shifts if c_shifts is not None else frames.get("c_nmr_peaks_ave")
-        elif isinstance(frames, (list, tuple)) and len(frames) > 0 and isinstance(frames[0], dict):
-            h_shifts = h_shifts if h_shifts is not None else frames[0].get("h_nmr_peaks_ave")
-            c_shifts = c_shifts if c_shifts is not None else frames[0].get("c_nmr_peaks_ave")
-
-    h_summary = summarize_shift_array(h_shifts)
-    c_summary = summarize_shift_array(c_shifts)
-
-    return {
-        "h_nmr_shift_mean": h_summary["mean"],
-        "h_nmr_shift_std": h_summary["std"],
-        "h_nmr_shift_max": h_summary["max"],
-        "h_nmr_peak_count": h_summary["count"],
-        "c_nmr_shift_mean": c_summary["mean"],
-        "c_nmr_shift_std": c_summary["std"],
-        "c_nmr_shift_max": c_summary["max"],
-        "c_nmr_peak_count": c_summary["count"],
-    }
+def _molecular_weight(smiles: str):
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    return Descriptors.MolWt(mol)
 
 
-def extract_ir_row_features(row) -> dict:
-    """Integrates the real IR spectrum intensity within standard
-    functional-group wavenumber windows to produce fixed-size band
-    features from the variable-length spectrum."""
-    freq = np.asarray(row["Frequency(cm^-1)"], dtype=float)
-    spec = np.asarray(row["ir_spectra"], dtype=float)
-
-    integrate = getattr(np, "trapezoid", None) or np.trapz
-
-    features = {}
-    for name, (lo, hi) in IR_BANDS.items():
-        mask = (freq >= lo) & (freq <= hi)
-        features[name] = float(integrate(spec[mask], freq[mask])) if mask.sum() > 1 else 0.0
-    return features
-
-
-def composition_flags_from_smiles(smiles: str) -> dict:
-    """Derives real categorical descriptors from the molecule's actual
-    structure (SMILES), used as the third ('descriptor') modality."""
+def build_real_dataset() -> pd.DataFrame:
     try:
-        from rdkit import Chem
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            raise ValueError("invalid SMILES")
-        symbols = {atom.GetSymbol() for atom in mol.GetAtoms()}
-        mw = None
-        from rdkit.Chem import Descriptors
-        mw = Descriptors.MolWt(mol)
-        return {
-            "contains_nitrogen": "yes" if "N" in symbols else "no",
-            "contains_oxygen": "yes" if "O" in symbols else "no",
-            "contains_halogen": "yes" if symbols & {"F", "Cl", "Br", "I"} else "no",
-            "contains_sulfur": "yes" if "S" in symbols else "no",
+        nmr_df = _download_parquet(NMR_FILE)
+        wanted_ids = set(nmr_df["id"].unique())
+        logging.info(f"NMR dataset has {len(wanted_ids)} molecules to match against IR chunks")
+
+        rows = []
+        for chunk_idx in range(1, N_IR_CHUNKS + 1):
+            chunk_name = IR_CHUNK_TEMPLATE.format(chunk_idx)
+            ir_df = _download_parquet(chunk_name)
+            matched = ir_df[ir_df["id"].isin(wanted_ids)]
+            logging.info(f"{chunk_name}: matched {len(matched)} molecules")
+
+            for _, row in matched.iterrows():
+                mw = _molecular_weight(row["smiles"])
+                if mw is None:
+                    continue
+                binned = _bin_spectrum(row["Frequency(cm^-1)"], row["ir_spectra"])
+                rows.append({
+                    "id": row["id"],
+                    "smiles": row["smiles"],
+                    "ir_spectrum_binned": json.dumps(binned.tolist()),
+                    "molecular_weight": mw,
+                })
+
+        df = pd.DataFrame(rows).drop_duplicates(subset="id").reset_index(drop=True)
+        logging.info(f"Fused real IR+NMR dataset built with {len(df)} molecules")
+        return df
+    except Exception as e:
+        raise CustomException(e, sys)
+
+
+def build_demo_dataset(n: int = 500, seed: int = 42) -> pd.DataFrame:
+    """
+    Small, fast, synthetic stand-in with the SAME schema as the real dataset,
+    for exercising the pipeline end-to-end without an 8GB download. The
+    SMILES are real (drawn from a fixed list of common small organic
+    molecules) and molecular_weight is computed for real via RDKit; only the
+    IR spectra are randomly generated, so they are NOT physically meaningful.
+    """
+    from rdkit import Chem
+
+    rng = np.random.default_rng(seed)
+    base_smiles = [
+        "CCO", "CC(=O)O", "c1ccccc1", "CCN", "CC(C)O", "CCOCC", "CC(=O)OC",
+        "c1ccc(O)cc1", "CCCCO", "CC(N)C(=O)O", "c1ccncc1", "CC(C)=O",
+        "CCOC(=O)C", "CCCl", "c1ccc(N)cc1", "CCCCCC", "OCC(O)CO",
+        "CC(C)(C)O", "c1ccc(Cl)cc1", "CCCCN",
+    ]
+    smiles_pool = [s for s in base_smiles if Chem.MolFromSmiles(s) is not None]
+
+    rows = []
+    for i in range(n):
+        smi = smiles_pool[i % len(smiles_pool)]
+        mw = _molecular_weight(smi)
+        if mw is None:
+            continue
+        freq = np.linspace(400, 4000, 512)
+        # a few random Lorentzian-ish peaks -- placeholder only, not real physics
+        intensity = np.zeros_like(freq)
+        for _ in range(rng.integers(3, 7)):
+            center = rng.uniform(500, 3800)
+            width = rng.uniform(20, 80)
+            height = rng.uniform(0.2, 1.0)
+            intensity += height / (1 + ((freq - center) / width) ** 2)
+        intensity += rng.normal(0, 0.02, size=freq.shape)
+        binned = _bin_spectrum(freq, intensity)
+
+        rows.append({
+            "id": f"demo_{i}",
+            "smiles": smi,
+            "ir_spectrum_binned": json.dumps(binned.tolist()),
             "molecular_weight": mw,
-        }
-    except Exception:
-        return {
-            "contains_nitrogen": "no",
-            "contains_oxygen": "no",
-            "contains_halogen": "no",
-            "contains_sulfur": "no",
-            "molecular_weight": None,
-        }
+        })
 
-
-def build_dataset(chunks):
-    os.makedirs(RAW_DIR, exist_ok=True)
-
-    nmr_path = os.path.join(RAW_DIR, "NMR_data.parquet")
-    download_file(NMR_URL, nmr_path)
-    nmr_df = pd.read_parquet(nmr_path)
-    print(f"Loaded {len(nmr_df)} molecules with real NMR data")
-
-    nmr_records = []
-    for _, row in nmr_df.iterrows():
-        rec = {"id": row["id"], "smiles": row["smiles"]}
-        rec.update(extract_nmr_row_features(row))
-        nmr_records.append(rec)
-    nmr_features_df = pd.DataFrame(nmr_records)
-
-    ir_records = []
-    for chunk_num in chunks:
-        chunk_path = os.path.join(RAW_DIR, f"IR_data_chunk{chunk_num:03d}_of_009.parquet")
-        download_file(IR_CHUNK_URL_TEMPLATE.format(chunk_num), chunk_path)
-        ir_df = pd.read_parquet(chunk_path)
-        print(f"Loaded {len(ir_df)} molecules from IR chunk {chunk_num}")
-
-        matched = ir_df[ir_df["id"].isin(set(nmr_features_df["id"]))]
-        print(f"  {len(matched)} of these also have real NMR data (fusable pairs)")
-        for _, row in matched.iterrows():
-            rec = {"id": row["id"]}
-            rec.update(extract_ir_row_features(row))
-            ir_records.append(rec)
-
-    if not ir_records:
-        print(
-            "No overlapping molecules found between the downloaded IR chunk(s) "
-            "and the NMR set. Try passing more --chunks (1-9) for broader coverage."
-        )
-        sys.exit(1)
-
-    ir_features_df = pd.DataFrame(ir_records)
-
-    fused = nmr_features_df.merge(ir_features_df, on="id", how="inner")
-    print(f"Fused IR + NMR multimodal dataset: {len(fused)} molecules")
-
-    descriptor_rows = fused["smiles"].apply(composition_flags_from_smiles).apply(pd.Series)
-    fused = pd.concat([fused, descriptor_rows], axis=1)
-
-    fused = fused.dropna(subset=["molecular_weight"])
-    fused = fused.drop(columns=["id", "smiles"])
-
-    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-    fused.to_csv(OUT_PATH, index=False)
-    print(f"Saved {len(fused)} rows to {OUT_PATH}")
+    df = pd.DataFrame(rows)
+    logging.info(f"Synthetic demo dataset built with {len(df)} rows (SYNTHETIC SPECTRA)")
+    return df
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--chunks", type=int, nargs="+", default=[1],
-        help="Which IR chunk numbers (1-9) to download and fuse with the NMR set. "
-             "Default: [1] (~900 MB). Add more for broader molecule coverage.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--demo", action="store_true",
+                         help="Build a small synthetic dataset instead of downloading the real 8GB dataset")
+    parser.add_argument("--n", type=int, default=500, help="Number of rows for --demo mode")
     args = parser.parse_args()
-    build_dataset(args.chunks)
+
+    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
+
+    if args.demo:
+        dataset = build_demo_dataset(n=args.n)
+    else:
+        dataset = build_real_dataset()
+
+    dataset.to_csv(OUT_PATH, index=False)
+    print(f"Wrote {len(dataset)} rows to {OUT_PATH}")
