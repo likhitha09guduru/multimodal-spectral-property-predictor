@@ -9,6 +9,9 @@ WORKDIR /app
 
 COPY requirements.txt setup.py ./
 COPY src ./src
+# CPU-only torch wheel first -- the default PyPI build bundles CUDA
+# libraries that are dead weight (and memory) on a CPU-only host.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
@@ -23,4 +26,6 @@ EXPOSE 5000
 # artifacts/ (trained model + preprocessor) must exist -- either bake them
 # into the image at build time, or mount them as a volume at run time:
 #   docker run -v $(pwd)/artifacts:/app/artifacts -p 5000:5000 <image>
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "120", "wsgi:application"]
+# -w 1: on a 512MB instance, a second gunicorn worker means a second full
+# torch/torch-geometric/rdkit import, which is what was causing the OOM.
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5000", "--timeout", "120", "wsgi:application"]
